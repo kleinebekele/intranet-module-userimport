@@ -14,13 +14,16 @@ use Intranet\Modules\UserImport\Notifications\AccountInvitation;
 /**
  * Import von Benutzern aus einer hochgeladenen CSV-Datei.
  *
- * Erwartete Spalten: externe_id, email, name, role1 … role10
+ * Erwartete Spalten: externe_id, email, name, role1 … role10, parent1 … parent4
  *
  * Regeln:
  *  - Reiner Import: bestehende Benutzer werden NICHT verändert.
  *  - Existiert die E-Mail bereits, wird die ganze Zeile blockiert (übersprungen).
  *  - Unbekannte Rollen werden automatisch in der roles-Tabelle angelegt.
  *  - Jeder neu angelegte Benutzer erhält eine Einladungs-Mail zum Passwort-Setzen.
+ *  - parent1 … parent4 verweisen (per externe_id ODER E-Mail) auf die Eltern des
+ *    Benutzers und werden nach dem Anlegen aller Zeilen in users_parents
+ *    hinterlegt (2. Durchgang → Reihenfolge in der Datei ist egal).
  */
 class UserImportController
 {
@@ -41,12 +44,15 @@ class UserImportController
         $filename = $file->getClientOriginalName();
         $file->store('imports'); // Kopie zur Nachvollziehbarkeit in storage/app/imports/
 
-        $total = $created = $skipped = 0;
+        $total = $created = $skipped = $linkedParents = 0;
         $status = 'completed';
         $error = null;
 
         try {
-            foreach ($this->readCsv($file->getRealPath()) as $row) {
+            $rows = $this->readCsv($file->getRealPath());
+
+            // 1. Durchgang: Benutzer anlegen.
+            foreach ($rows as $row) {
                 $total++;
 
                 $email = trim($row['email'] ?? '');
@@ -82,6 +88,9 @@ class UserImportController
 
                 $created++;
             }
+
+            // 2. Durchgang: Eltern-Kind-Beziehungen verknüpfen (alle Benutzer existieren nun).
+            $linkedParents = $this->linkParents($rows);
         } catch (\Throwable $e) {
             $status = 'failed';
             $error = $e->getMessage();
@@ -98,7 +107,7 @@ class UserImportController
         ]);
 
         $message = $status === 'completed'
-            ? "Import abgeschlossen: {$created} neu angelegt, {$skipped} übersprungen (von {$total} Zeilen)."
+            ? "Import abgeschlossen: {$created} neu angelegt, {$skipped} übersprungen (von {$total} Zeilen), {$linkedParents} Eltern-Verknüpfungen."
             : "Import fehlgeschlagen: {$error}";
 
         return redirect()->route('module.userimport.index')->with('status', $message);
@@ -130,6 +139,51 @@ class UserImportController
     }
 
     /**
+     * 2. Durchgang: verknüpft parent1 … parent4 mit dem Benutzer der Zeile in
+     * users_parents. Eltern werden per externe_id ODER E-Mail (enthält „@")
+     * aufgelöst; nur bereits existierende Benutzer werden verlinkt. Idempotent.
+     *
+     * @param  array<int, array<string, string>>  $rows
+     */
+    private function linkParents(array $rows): int
+    {
+        $linked = 0;
+
+        foreach ($rows as $row) {
+            $childKey = trim($row['externe_id'] ?? '');
+            if ($childKey === '') {
+                continue;
+            }
+
+            $child = User::where('externe_id', $childKey)->first();
+            if (! $child) {
+                continue;
+            }
+
+            $parentIds = [];
+            foreach (['parent1', 'parent2', 'parent3', 'parent4'] as $col) {
+                $ref = trim($row[$col] ?? '');
+                if ($ref === '') {
+                    continue;
+                }
+                $parent = str_contains($ref, '@')
+                    ? User::where('email', $ref)->first()
+                    : User::where('externe_id', $ref)->first();
+                if ($parent && $parent->id !== $child->id) {
+                    $parentIds[$parent->id] = $parent->id; // Set → keine Dubletten
+                }
+            }
+
+            if ($parentIds !== []) {
+                $child->parents()->syncWithoutDetaching(array_values($parentIds));
+                $linked += count($parentIds);
+            }
+        }
+
+        return $linked;
+    }
+
+    /**
      * Liest eine CSV robust ein: erkennt das Trennzeichen (',' oder ';'),
      * entfernt ein evtl. UTF-8-BOM und liefert je Zeile ein assoziatives
      * Array (kleingeschriebener Spaltenname => Wert).
@@ -154,12 +208,12 @@ class UserImportController
         $delimiter = substr_count($firstLine, ';') > substr_count($firstLine, ',') ? ';' : ',';
         $header = array_map(
             static fn ($h) => strtolower(trim((string) $h)),
-            str_getcsv($firstLine, $delimiter)
+            str_getcsv($firstLine, $delimiter, '"', '')
         );
         $columns = count($header);
 
         $rows = [];
-        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+        while (($data = fgetcsv($handle, 0, $delimiter, '"', '')) !== false) {
             // Komplett leere Zeilen überspringen.
             if (count($data) === 1 && trim((string) $data[0]) === '') {
                 continue;

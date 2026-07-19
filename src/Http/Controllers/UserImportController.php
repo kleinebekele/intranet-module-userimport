@@ -20,7 +20,11 @@ use Intranet\Modules\UserImport\Notifications\AccountInvitation;
  *  - Reiner Import: bestehende Benutzer werden NICHT verändert.
  *  - Existiert die E-Mail bereits, wird die ganze Zeile blockiert (übersprungen).
  *  - Unbekannte Rollen werden automatisch in der roles-Tabelle angelegt.
- *  - Jeder neu angelegte Benutzer erhält eine Einladungs-Mail zum Passwort-Setzen.
+ *  - Einladungs-Mails gehen NUR raus, wenn das Formular sie ausdrücklich anfordert
+ *    (Checkbox `invite`). Standard ist AUS: ein Import legt schnell hunderte
+ *    Benutzer an, und verschickte Mails holt man nicht zurück. Ohne Einladung
+ *    bleibt der Benutzer ohne Passwort und kann sich später über
+ *    "Passwort vergessen" oder eine gezielte Einladung selbst freischalten.
  *  - parent1 … parent4 verweisen (per externe_id ODER E-Mail) auf die Eltern des
  *    Benutzers und werden nach dem Anlegen aller Zeilen in users_parents
  *    hinterlegt (2. Durchgang → Reihenfolge in der Datei ist egal).
@@ -38,13 +42,17 @@ class UserImportController
     {
         $request->validate([
             'file' => ['required', 'file', 'mimes:csv,txt', 'max:5120'], // max. 5 MB
+            'invite' => ['nullable', 'boolean'],
         ]);
+
+        // Fehlende Checkbox = false. Der Versand muss aktiv gewollt sein.
+        $invite = $request->boolean('invite');
 
         $file = $request->file('file');
         $filename = $file->getClientOriginalName();
         $file->store('imports'); // Kopie zur Nachvollziehbarkeit in storage/app/imports/
 
-        $total = $created = $skipped = $linkedParents = 0;
+        $total = $created = $skipped = $linkedParents = $invited = 0;
         $status = 'completed';
         $error = null;
 
@@ -82,9 +90,12 @@ class UserImportController
 
                 $this->syncRoles($user, $row);
 
-                // Einladung mit Link zum Passwort-Setzen verschicken.
-                $token = Password::broker()->createToken($user);
-                $user->notify(new AccountInvitation($token));
+                // Einladung mit Link zum Passwort-Setzen – nur auf ausdrücklichen Wunsch.
+                if ($invite) {
+                    $token = Password::broker()->createToken($user);
+                    $user->notify(new AccountInvitation($token));
+                    $invited++;
+                }
 
                 $created++;
             }
@@ -106,8 +117,13 @@ class UserImportController
             'error_message' => $error,
         ]);
 
+        // Der Mail-Versand wird immer mitgemeldet – auch (und gerade) wenn keiner stattfand.
+        $einladungen = $invite
+            ? "{$invited} Einladungen verschickt"
+            : 'keine Einladungen verschickt';
+
         $message = $status === 'completed'
-            ? "Import abgeschlossen: {$created} neu angelegt, {$skipped} übersprungen (von {$total} Zeilen), {$linkedParents} Eltern-Verknüpfungen."
+            ? "Import abgeschlossen: {$created} neu angelegt, {$skipped} übersprungen (von {$total} Zeilen), {$linkedParents} Eltern-Verknüpfungen, {$einladungen}."
             : "Import fehlgeschlagen: {$error}";
 
         return redirect()->route('module.userimport.index')->with('status', $message);

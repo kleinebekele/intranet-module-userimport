@@ -25,6 +25,23 @@
                     @error('file') <p class="mt-1 text-sm text-red-600">{{ $message }}</p> @enderror
                 </div>
 
+                {{-- Einladungen sind bewusst standardmaessig AUS: ein Import legt oft
+                     hunderte Benutzer an, und der Versand laesst sich nicht zurueckholen. --}}
+                <div class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <label class="flex items-start gap-2.5">
+                        <input type="checkbox" name="invite" value="1"
+                               class="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        <span class="text-sm text-gray-700">
+                            <span class="font-medium">Einladungs-Mails sofort versenden</span>
+                            <span class="mt-0.5 block text-xs text-gray-500">
+                                Ohne Haken werden die Benutzer nur angelegt &ndash; niemand bekommt eine Mail.
+                                Das ist der Normalfall: Zugaenge lassen sich spaeter kontrolliert freischalten,
+                                ein versendeter Einladungs-Schwall aber nicht zurueckholen.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+
                 <div class="flex items-center gap-3">
                     <button type="submit"
                             class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">

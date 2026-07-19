@@ -12,8 +12,12 @@ Rollen-Zuweisung und Einladungs-Mail zum Passwort-Setzen.
   bereits vorhanden, wird die ganze Zeile übersprungen.
 - **Rollen:** unbekannte Rollen aus der CSV werden automatisch im Core angelegt
   (`roles`) und n:n mit dem Benutzer verknüpft (`user_roles`).
-- **Einladung:** jeder neu angelegte Benutzer erhält eine Mail mit einem Link,
-  über den er sein eigenes Passwort festlegt (nutzt Laravels Passwort-Reset).
+- **Einladung:** nur wenn im Formular ausdrücklich angehakt. Standard ist **aus** –
+  ein Import legt schnell hunderte Benutzer an, und verschickte Mails holt man
+  nicht zurück. Mit Haken erhält jeder neu angelegte Benutzer eine Mail mit einem
+  Link, über den er sein Passwort festlegt (nutzt Laravels Passwort-Reset). Ohne
+  Haken bleibt der Benutzer ohne Passwort und kann sich später über
+  „Passwort vergessen" selbst freischalten.
 
 ## Erwartetes CSV-Format
 
